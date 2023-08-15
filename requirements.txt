@@ -1,0 +1,6 @@
+Pillow==10.0.0
+pyaccsharedmemory==1.0.0
+pycountry==22.3.5
+pypresence==4.2.0
+pystray==0.19.4
+Requests==2.31.0
