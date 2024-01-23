@@ -2,6 +2,7 @@ import irsdk
 import pyaccsharedmemory
 import r3e_api
 # add rfactor 2 api after
+from datetime import timedelta
 from pypresence import Presence
 from tkinter import *
 from configparser import ConfigParser
@@ -16,6 +17,10 @@ shared_variables = {
         "latest_data": {}
     },
     "AC2-Win64-Shipping.exe": {
+        "running": False,
+        "latest_data": {}
+    },
+    "rFactor2.exe": {
         "running": False,
         "latest_data": {}
     },
@@ -63,6 +68,7 @@ class iRacing_API:
         while True:
             if shared_variables["exit"]:
                 self.close_iracing_api()
+                break
             check_process_status("iRacingSim64DX11.exe")
 
             if shared_variables["Discord.exe"]["connected"] and shared_variables["iRacingSim64DX11.exe"]["running"]:
@@ -140,17 +146,33 @@ class ACC_API: #DONE, TO TEST
             check_process_status("AC2-Win64-Shipping.exe")
 
             if shared_variables["Discord.exe"]["connected"] and shared_variables["AC2-Win64-Shipping.exe"]["running"]:
+
                 self.read_acc_telemetry()
             time.sleep(1)
 #=============================================================================================================================
-class R3E_API:
+class rF2_API:
+    def read_rf2_telemetry(self):
+        pass
+
+    def __init__(self):
+        self.config = ConfigParser()
+        self.config.read(get_path('assets/configs/rf2_config.ini'))
+
+        self.latest_telemetry = {}
+
+        while True:
+            check_process_status("rFactor2.exe")
+
+            if shared_variables["Discord.exe"]["connected"] and shared_variables["rFactor2.exe"]["running"]:
+                self.read_rf2_telemetry()
+            time.sleep(1)
+#=============================================================================================================================
+class R3E_API: #DONE, TO TEST
     def read_r3e_telemetry(self):
         telemetry = self.shared_mem.update_buffer()
 
-        # https://github.com/Yuvix25/r3e-python-api/blob/main/r3e_api/data/data.cs
-
         if telemetry != None:
-            if self.shared_mem.get_value('Shared.GameInMenus'):
+            if self.shared_mem.get_value('GameInMenus'):
                 self.latest_telemetry["state"] = "In menus"
                 self.latest_telemetry["details"] = None
                 self.latest_telemetry["end"] = None
@@ -158,11 +180,46 @@ class R3E_API:
                 self.latest_telemetry["large_text"] = None
                 self.latest_telemetry["small_image"] = None
                 self.latest_telemetry["small_text"] = None
-            elif self.shared_mem.get_value('Shared.GameInReplay'):
-                car = self.config['CARS'][self.shared_mem.get_value('DriverInfo.ModelId')]
-            elif self.shared_mem.get_value('Shared.GameInPause') or self.shared_mem.get_value('Shared.GameUnused1'):
-                pass
-            
+            elif self.shared_mem.get_value('GameInReplay'):
+                car = self.shared_mem.get_value('VehicleInfo.Name')
+                brand = car.split(" ")[0].lower()
+                track = self.shared_mem.get_value('TrackName')
+                layout = self.shared_mem.get_value('LayoutName')
+
+                self.latest_telemetry["state"] = f"{car} at {track} ({layout})"
+                self.latest_telemetry["details"] = f"Watching a {self.shared_mem.get_value('SessionType')} replay"
+                self.latest_telemetry["end"] = None
+                self.latest_telemetry["large_image"] = track.lower()
+                self.latest_telemetry["large_text"] = track
+                self.latest_telemetry["small_image"] = brand.lower()
+                self.latest_telemetry["small_text"] = car
+            elif self.shared_mem.get_value('SessionType') >= 0:
+                car = self.shared_mem.get_value('VehicleInfo.Name')
+                brand = car.split(" ")[0].lower()
+                track = self.shared_mem.get_value('TrackName')
+                layout = self.shared_mem.get_value('LayoutName')
+
+                self.latest_telemetry["state"] = f"{car} at {track} ({layout})"
+                personal_best = str(timedelta(seconds=self.shared_mem.get_value('LapTimeBestSelf')))
+                if "-1 day" in personal_best:
+                    personal_best = None
+                
+                match self.shared_mem.get_value('SessionType'):
+                    case 0 | 3:
+                        self.latest_telemetry["details"] = f"{self.shared_mem.get_value('SessionType')} | PB: {personal_best}"
+                    case 1 | 2:
+                        self.latest_telemetry["details"] = f"{self.shared_mem.get_value('SessionType')} | P{self.shared_mem.get_value('PositionClass')} of {self.shared_mem.get_value('NumCars')}"
+
+                if self.shared_mem.get_value('SessionTimeRemaining') > 0.0:
+                    self.latest_telemetry["end"] = math.ceil(time.time() + (self.shared_mem.get_value('SessionTimeRemaining')/1000))
+                else:
+                    self.latest_telemetry["end"] = None
+
+                self.latest_telemetry["large_image"] = track.lower()
+                self.latest_telemetry["large_text"] = track
+                self.latest_telemetry["small_image"] = brand.lower()
+                self.latest_telemetry["small_text"] = car
+
             shared_variables["RRRE64.exe"]["latest_data"] = self.latest_telemetry
 
     def __init__(self):
@@ -180,7 +237,7 @@ class R3E_API:
                 self.read_r3e_telemetry()
             time.sleep(1)
 #=============================================================================================================================
-class Discord_API:
+class Discord_API: #DONE, TO TEST
     def close_discord_api(self):
         try:
             self.rich_presence.clear()
@@ -236,9 +293,7 @@ class Tkinter_APP:
     def tray_func(self):
         self.tray_icon = Image.open(get_path("assets/simracing_rp_icon.ico"))
         self.tray_app = pystray.Icon("Simracing Rich Presence", self.tray_icon, menu=pystray.Menu(
-            pystray.MenuItem("iRacing Connected", None),
-            pystray.MenuItem("ACC Connected", None),
-            pystray.MenuItem("Raceroom Connected", None),
+            self.ir_box, self.acc_box, self.rf2_box, self.r3e_box,
             pystray.MenuItem("Exit", self.close_tray_app)
         ))
         
@@ -248,8 +303,22 @@ class Tkinter_APP:
         self.window_active = False
         self.tray_thread = threading.Thread(target=self.tray_func, args=())
         self.tray_thread.start()
+
+        self.ir_box = pystray.MenuItem("iRacing Connected", None, False)
+        self.acc_box = pystray.MenuItem("ACC Connected", None, False)
+        self.rf2_box = pystray.MenuItem("rF2 Connected", None, False)
+        self.r3e_box = pystray.MenuItem("R3E Connected", None, False)
     
         while True:
+            if shared_variables["iRacingSim64DX11.exe"]["connected"]:
+                self.ir_box.checked = True
+            elif shared_variables["AC2-Win64-Shipping.exe"]["running"]:
+                self.acc_box.checked = True
+            elif shared_variables["rFactor2.exe"]["running"]:
+                self.rf2_box.checked = True
+            elif shared_variables["RRRE64.exe"]["running"]:
+                self.r3e_box.checked = True
+
             if shared_variables["exit"] and not shared_variables["iRacingSim64DX11.exe"]["connected"] and not shared_variables["Discord.exe"]["connected"]:
                 sys.exit()
             time.sleep(1)
@@ -257,6 +326,7 @@ class Tkinter_APP:
 try: 
     iracing_class = iRacing_API()
     acc_class = ACC_API()
+    rf2_class = rF2_API()
     r3e_class = R3E_API()
     discord_class = Discord_API()
     gui_class = Tkinter_APP()
