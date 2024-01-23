@@ -4,11 +4,9 @@ import r3e_api
 # add rfactor 2 api after
 from pypresence import Presence
 from tkinter import *
-from urllib.request import urlretrieve
 from configparser import ConfigParser
-from datetime import date
-from PIL import Image, ImageTk
-import math, time, os, threading, sys, requests, pystray, pycountry
+from PIL import Image
+import math, time, os, threading, sys, pystray
 #=============================================================================================================================
 shared_variables = {
     "exit": False,
@@ -71,85 +69,111 @@ class iRacing_API:
                 self.read_iracing_telemetry()
             time.sleep(1)
 #=============================================================================================================================
-class ACC_API:
-#=============================================================================================================================
-    def close_acc_api(self):
-        #TODO - figure out how ACC API connection is gracefully closed
-        pass
-#=============================================================================================================================
+class ACC_API: #DONE, TO TEST
     def read_acc_telemetry(self):
-        telemetry = accSharedMemory().read_shared_memory()
+        telemetry = self.shared_mem.read_shared_memory()
 
         if telemetry != None:
-            self.status = telemetry.Graphics.status
+            match telemetry.Graphics.status:
+                case pyaccsharedmemory.ACC_STATUS.ACC_OFF:
+                    self.latest_telemetry["state"] = "In menus"
+                    self.latest_telemetry["details"] = None
+                    self.latest_telemetry["end"] = None
+                    self.latest_telemetry["large_image"] = "acc_logo"
+                    self.latest_telemetry["large_text"] = None
+                    self.latest_telemetry["small_image"] = None
+                    self.latest_telemetry["small_text"] = None
+                case pyaccsharedmemory.ACC_STATUS.ACC_REPLAY:
+                    car = self.config['CARS'][telemetry.Static.car_model.replace("\x00", "").lower()]
+                    brand = car.split(" ")[0].lower()
+                    track = self.config['TRACKS'][telemetry.Static.track.replace("\x00", "").lower()]
 
-            if self.status != ACC_STATUS.ACC_OFF:
-                self.car_model = telemetry.Static.car_model.replace("\x00", "").lower()
-                self.track = telemetry.Static.track.replace("\x00", "").lower()
-                self.session_type = telemetry.Graphics.session_type
+                    self.latest_telemetry["state"] = f"{car} at {track}"
+                    self.latest_telemetry["details"] = f"Watching a {telemetry.Graphics.session_type} replay"
+                    self.latest_telemetry["end"] = None
+                    self.latest_telemetry["large_image"] = track.lower()
+                    self.latest_telemetry["large_text"] = track
+                    self.latest_telemetry["small_image"] = brand.lower()
+                    self.latest_telemetry["small_text"] = car
+                case pyaccsharedmemory.ACC_STATUS.ACC_LIVE | pyaccsharedmemory.ACC_STATUS.ACC_PAUSE:
+                    car = self.config['CARS'][telemetry.Static.car_model.replace("\x00", "").lower()]
+                    brand = car.split(" ")[0].lower()
+                    track = self.config['TRACKS'][telemetry.Static.track.replace("\x00", "").lower()]
 
-                if self.status != ACC_STATUS.ACC_REPLAY:
-                    self.best_time_str = telemetry.Graphics.best_time_str.replace("\x00", "")
-                    if self.best_time_str == "35791:23:647": 
-                        self.best_time_str = "None"
+                    self.latest_telemetry["state"] = f"{car} at {track}"
+                    pb_split = telemetry.Graphics.best_time_str.replace("\x00", "").split(":")
+                    if pb_split[0] is "35791":
+                        personal_best = None
                     else:
-                        split_str = self.best_time_str.split(":")
-                        self.best_time_str = split_str[0] + ":" + split_str[1] + "." + split_str[2]
-
-                    self.position = telemetry.Graphics.position
-                    self.num_cars = telemetry.Static.num_cars
+                        personal_best = f"{pb_split[0]}:{pb_split[1]}.{pb_split[2]}"
                     
-                    self.is_online = telemetry.Static.is_online
-                    self.session_time_left = telemetry.Graphics.session_time_left/1000
-
-                    if self.session_time_left > 0.0:
-                        self.session_end = math.ceil(time.time() + self.session_time_left)
-                        self.timed_session = True
+                    match telemetry.Graphics.session_type:
+                        case pyaccsharedmemory.ACC_SESSION_TYPE.ACC_PRACTICE | \
+                                pyaccsharedmemory.ACC_SESSION_TYPE.ACC_HOTLAP | \
+                                pyaccsharedmemory.ACC_SESSION_TYPE.ACC_HOTLAPSUPERPOLE | \
+                                pyaccsharedmemory.ACC_SESSION_TYPE.ACC_HOTSTINT:
+                            self.latest_telemetry["details"] = f"{telemetry.Graphics.session_type} | PB: {personal_best}"
+                        case pyaccsharedmemory.ACC_SESSION_TYPE.ACC_QUALIFY | \
+                                pyaccsharedmemory.ACC_SESSION_TYPE.ACC_RACE:
+                            self.latest_telemetry["details"] = f"{telemetry.Graphics.session_type} | P{telemetry.Graphics.position} of {telemetry.Static.num_cars}"
+                    
+                    if telemetry.Graphics.session_time_left > 0.0:
+                        self.latest_telemetry["end"] = math.ceil(time.time() + (telemetry.Graphics.session_time_left/1000))
                     else:
-                        self.session_end = None
-                        self.timed_session = False
-        else: 
-            self.status = ACC_STATUS.ACC_OFF
-#=============================================================================================================================
+                        self.latest_telemetry["end"] = None
+                    
+                    self.latest_telemetry["large_image"] = track.lower()
+                    self.latest_telemetry["large_text"] = track
+                    self.latest_telemetry["small_image"] = brand.lower()
+                    self.latest_telemetry["small_text"] = car
+
+            shared_variables["AC2-Win64-Shipping.exe"]["latest_data"] = self.latest_telemetry
+
     def __init__(self):
         self.config = ConfigParser()
-        self.config.read(self.get_path('assets/config.ini'))
-
-        self.acc_running = False
-        self.status = ACC_STATUS.ACC_OFF
-        self.timed_session = False
-
-        self.lfm_series_list = []
-        self.lfm_checked = False
-        self.lfm_data = {"series": None, "split": None, "sof": None}
+        self.config.read(get_path('assets/configs/acc_config.ini'))
+        
+        self.shared_mem = pyaccsharedmemory.accSharedMemory()
+        self.latest_telemetry = {}
 
         while True:
-            if self.exit == True: 
-                sys.exit()
-            self.check_process_status()
+            check_process_status("AC2-Win64-Shipping.exe")
 
-            if len(self.lfm_series_list) == 0 or self.lfm_series_list[0]['search_date'] != date.today():
-                self.lfm_series_fetch()
-
-            if self.acc_running == True and self.discord_connected == True:        
+            if shared_variables["Discord.exe"]["connected"] and shared_variables["AC2-Win64-Shipping.exe"]["running"]:
                 self.read_acc_telemetry()
-                self.update_rich_presence()
             time.sleep(1)
 #=============================================================================================================================
 class R3E_API:
-    def close_r3e_api(self):
-        #TODO - figure out how R3E API connection is gracefully closed
-        pass
-#=============================================================================================================================
     def read_r3e_telemetry(self):
-        pass
+        telemetry = self.shared_mem.update_buffer()
+
+        # https://github.com/Yuvix25/r3e-python-api/blob/main/r3e_api/data/data.cs
+
+        if telemetry != None:
+            if self.shared_mem.get_value('Shared.GameInMenus'):
+                self.latest_telemetry["state"] = "In menus"
+                self.latest_telemetry["details"] = None
+                self.latest_telemetry["end"] = None
+                self.latest_telemetry["large_image"] = "r3e_logo"
+                self.latest_telemetry["large_text"] = None
+                self.latest_telemetry["small_image"] = None
+                self.latest_telemetry["small_text"] = None
+            elif self.shared_mem.get_value('Shared.GameInReplay'):
+                car = self.config['CARS'][self.shared_mem.get_value('DriverInfo.ModelId')]
+            elif self.shared_mem.get_value('Shared.GameInPause') or self.shared_mem.get_value('Shared.GameUnused1'):
+                pass
+            
+            shared_variables["RRRE64.exe"]["latest_data"] = self.latest_telemetry
 
     def __init__(self):
+        self.config = ConfigParser()
         self.config.read(get_path('assets/configs/r3e_config.ini'))
 
+        self.shared_mem = r3e_api.R3ESharedMemory()
+        self.shared_mem.update_offsets()
+        self.latest_telemetry = {}
+
         while True:
-            if shared_variables["exit"]:
-                self.close_r3e_api()
             check_process_status("RRRE64.exe")
 
             if shared_variables["Discord.exe"]["connected"] and shared_variables["RRRE64.exe"]["running"]:
@@ -164,272 +188,58 @@ class Discord_API:
         except:
             pass
 
-    def update_rich_presence(self):
-        match self.status:
-            case ACC_STATUS.ACC_OFF:
-                self.in_game = False
-                self.lfm_checked = False
-                self.lfm_data = {"series": None, "split": None, "sof": None}
-                
-                self.state = "In menus"
-                self.details = None
-                self.end = None
-                self.large_image = "acc_logo"
-                self.large_text = None
-                self.small_image = None
-                self.small_text = None
-            case ACC_STATUS.ACC_REPLAY:
-                self.in_game = False
-                car_mapped = self.config['CARS'][self.car_model]
-                car_brand = car_mapped.split(" ")[0].lower()
-                track_mapped = self.config['TRACKS'][self.track]
-                
-                self.state = f"{car_mapped} at {track_mapped}" 
-                self.details = f"Watching a {self.session_type} Replay"
-                self.end = None
-                self.large_image = self.track.lower()
-                self.large_text = track_mapped
-                self.small_image = car_brand.lower()
-                self.small_text = car_mapped
-            case ACC_STATUS.ACC_LIVE | ACC_STATUS.ACC_PAUSE:
-                self.in_game = True
-                car_mapped = self.config['CARS'][self.car_model].split("/")[0]
-                class_mapped = self.config['CARS'][self.car_model].split("/")[1].upper()
-                car_brand = car_mapped.split(" ")[0].lower()
-                track_mapped = self.config['TRACKS'][self.track]
-                
-                if self.is_online == True and self.lfm_checked == False:
-                    for lfm_series in self.lfm_series_list:
-                        if class_mapped in lfm_series['classes'] and self.track == lfm_series['active_track']:
-                            self.lfm_next_race_info(series=lfm_series)
-                    self.lfm_checked = True
+    def create_and_connect_api(self, simulator):
+        self.rich_presence = Presence(self.config['APPLICATION'][simulator])
+        try:
+            self.rich_presence.connect()
+            shared_variables["Discord.exe"]["connected"] = True
+        except:
+            pass
 
-                match self.is_online:
-                    case True: 
-                        self.is_online = "Online"
-                    case False: 
-                        self.is_online = "Offline"
-
-                if self.lfm_data['split'] != None:
-                    self.state = f"Split {self.lfm_data['split']} | SoF: {self.lfm_data['sof']} | {self.lfm_data['series']}"
-                    self.details = "LFM"
-                else:
-                    self.state = f"{car_mapped} at {track_mapped}"
-                    self.details = str(self.is_online)
-                
-                self.details += f" {self.session_type}"
-                self.end = self.session_end
-                self.large_image = self.track.lower()
-                self.large_text = track_mapped
-                self.small_image = car_brand.lower()
-                self.small_text = car_mapped
-        if self.in_game:
-            match self.session_type:
-                case ACC_SESSION_TYPE.ACC_PRACTICE | ACC_SESSION_TYPE.ACC_HOTLAP | ACC_SESSION_TYPE.ACC_HOTLAPSUPERPOLE | ACC_SESSION_TYPE.ACC_HOTSTINT:
-                    self.details += f" | PB: {self.best_time_str}"
-                    if self.timed_session == False: self.end = None
-                case ACC_SESSION_TYPE.ACC_QUALIFY | ACC_SESSION_TYPE.ACC_RACE:
-                    self.details += f" | P{self.position} of {self.num_cars}"
-
-        try: self.rich_presence.update(state = self.state, details = self.details, end = self.end, large_image = self.large_image,
-                                       large_text = self.large_text, small_image = self.small_image, small_text = self.small_text)
-        except: 
+    def update_rich_presence(self, simulator):
+        try:
+            self.rich_presence.update(state=shared_variables[simulator]["latest_data"]["state"],
+                                    details=shared_variables[simulator]["latest_data"]["details"],
+                                    end=shared_variables[simulator]["latest_data"]["end"],
+                                    large_image=shared_variables[simulator]["latest_data"]["large_image"],
+                                    large_text=shared_variables[simulator]["latest_data"]["large_text"],
+                                    small_image=shared_variables[simulator]["latest_data"]["small_image"],
+                                    small_text=shared_variables[simulator]["latest_data"]["small_text"])
+        except:
             pass
 
     def __init__(self):
         self.config = ConfigParser()
         self.config.read(get_path('assets/configs/discord_config.ini'))
 
-        self.rich_presence = Presence(self.config['USER']['RichPresenceID'])
-
         while True:
             if shared_variables["exit"]:
                 self.close_discord_api()
                 break
-
             check_process_status("Discord.exe")
-
-            if shared_variables["Discord.exe"]["running"] and not shared_variables["Discord.exe"]["connected"]:
-                try:
-                    self.rich_presence.connect()
-                    shared_variables["Discord.exe"]["connected"] = True
-                except:
-                    time.sleep(1)
                 
-            if shared_variables["Discord.exe"]["connected"]:
-                if shared_variables["iRacingSim64DX11.exe"]["running"] or shared_variables["AC2-Win64-Shipping.exe"]["running"] or shared_variables["RRRE64.exe"]["running"]:
-                    self.update_rich_presence()
-
+            if shared_variables["Discord.exe"]["running"]:
+                for simulator in shared_variables:
+                    if simulator is not "exit" and shared_variables[simulator]["running"]:
+                        self.create_and_connect_api(simulator)
+                        while shared_variables[simulator]["running"]:
+                            self.update_rich_presence(simulator)
+                            time.sleep(1)
+                        self.close_discord_api()
+            time.sleep(1)
 #=============================================================================================================================
-class Tkinter_GUI:
-    def close_gui(self):
-        if self.window_active:
-            self.window.quit()
-        
+class Tkinter_APP:
+    def close_tray_app(self):
         self.tray_app.stop()
         shared_variables['exit'] = True
-# #=============================================================================================================================
-#     def clear_window(self):
-#         for widget in self.window_active_widgets:
-#             widget.place_forget()
-        
-#         self.window_active_widgets.clear()
-# #=============================================================================================================================
-#     def generate_window_elements(self):
-#         self.top_label = Label(self.window, width=26, font=("Franklin Gothic", 12, "bold"))
-#         self.top_label.place(x=0, y=5)
-#         self.info_label = Label(self.window, width=32, height=2, wraplength=200, font=("Franklin Gothic", 10))
-#         self.id_string = StringVar()
-#         self.id_entry = Entry(self.window, textvariable=self.id_string, width=15, font=("Franklin Gothic", 12, "bold"))
-#         self.search_button = Button(self.window, command=self.lfm_user_search, width=13, font=("Franklin Gothic", 12, "bold"))
-#         self.driver_name = Label(self.window, width=18, anchor="w", font=("Franklin Gothic", 10))
-#         self.driver_country = Label(self.window, width=18, anchor="w", font=("Franklin Gothic", 10))
-#         self.driver_elo = Label(self.window, width=18, anchor="w", font=("Franklin Gothic", 10))
-#         self.driver_avatar = Label(self.window, width=60, height=60, bd=1, relief="solid")
-#         self.confirm_button = Button(self.window, command=self.lfm_user_set, font=("Franklin Gothic", 12, "bold"))
-#         self.cancel_button = Button(self.window, command=self.window_draw_search, font=("Franklin Gothic", 12, "bold"))
-#         self.change_button = Button(self.window, command=self.window_draw_search, font=("Franklin Gothic", 12, "bold"))
-# #=============================================================================================================================
-#     def window_draw_search(self):
-#         self.clear_window()
-#         self.lfm_update = False
 
-#         self.top_label.config(text="Insert your LFM ID")
-#         self.info_label.config(text="You can find your ID in the URL of your profile page")
-#         self.info_label.place(x=0, y=30)
-#         self.id_entry.place(x=65, y=75)
-#         self.search_button.config(text="Search User")
-#         self.search_button.place(x=63, y=105)
-        
-#         self.window_active_widgets.extend([self.info_label, self.id_entry, self.search_button])
-# #=============================================================================================================================
-#     def window_draw_user(self, version):
-#         self.clear_window()
-
-#         if version == 3:
-#             self.lfm_update = True
-#             self.lfm_user_search()
-
-#         self.driver_name.config(text=f"Driver: {self.lfm_name}")
-#         self.driver_name.place(x=15, y=35)
-#         self.driver_country.config(text=f"Country: {self.lfm_country}")
-#         self.driver_country.place(x=15, y=55)
-#         self.driver_elo.config(text=f"ELO Rating: {self.lfm_rating}")
-#         self.driver_elo.place(x=15, y=75)
-#         self.driver_avatar.config(image=self.lfm_avatar, bd=1, relief="solid")
-#         self.driver_avatar.place(x=180, y=34)
-        
-#         self.window_active_widgets.extend([self.driver_name, self.driver_country, self.driver_elo, self.driver_avatar])
-        
-#         if version == 2:
-#             self.top_label.config(text="LFM Driver Found")
-#             self.confirm_button.config(text="Confirm")
-#             self.confirm_button.place(x=30, y=105)
-#             self.cancel_button.config(text="Cancel")
-#             self.cancel_button.place(x=160, y=105)
-            
-#             self.window_active_widgets.extend([self.confirm_button, self.cancel_button])
-#         elif version == 3:
-#             self.top_label.config(text="LFM Driver Selected")
-#             self.change_button.config(text="Change User")
-#             self.change_button.place(x=75, y=105)
-#             self.window_active_widgets.extend([self.change_button])
-# #=============================================================================================================================
-#     def lfm_user_search(self):
-#         if self.lfm_update == False:
-#             endpoint_id = self.id_string.get()
-#         else:
-#             endpoint_id = self.config['USER']['LFMID']
-        
-#         lfm_user = requests.get(f"{self.config['ENDPOINTS']['UserSearch']}{endpoint_id}").json()
-
-#         if "id" in lfm_user:
-#             self.lfm_id = lfm_user['id']
-#             self.lfm_name = f"{lfm_user['vorname']} {lfm_user['nachname']}"
-#             self.lfm_country = pycountry.countries.get(alpha_2=lfm_user['origin'].split("-")[0]).name
-#             self.lfm_rating = lfm_user['rating_by_sim'][0]['rating']
-            
-#             urlretrieve(lfm_user['avatar'], self.get_path('assets/lfm_avatar.png'))
-#             self.lfm_avatar = ImageTk.PhotoImage(master=self.window, image=Image.open(self.get_path('assets/lfm_avatar.png')).resize((60,60)))
-            
-#             if self.lfm_update == 0:
-#                 self.window_draw_user(version=2)
-#         else:
-#             self.search_button.config(text="User Not Found")
-# #=============================================================================================================================
-#     def lfm_user_set(self):
-#         self.config['USER']['LFMID'] = str(self.lfm_id)
-        
-#         with open(self.get_path('assets/config.ini'), 'w') as config:
-#             self.config.write(config)
-        
-#         self.window_draw_user(version=3)
-# #=============================================================================================================================
-#     def lfm_series_fetch(self):
-#         self.lfm_series_list.append({"search_date": date.today()})
-#         series_info = requests.get(self.config['ENDPOINTS']['GetSeries']).json()
-        
-#         for series in series_info['series'][0]['series']:
-#             entry = {"name": series['series_name'], "id": int(series['event_id']),
-#                      "classes": series['settings']['championship_settings']['car_classes'][0]['class'],
-#                      "track": series['active_track']['track_name'], "team_series": bool(series['team_event'])}
-            
-#             self.lfm_series_list.append(entry)
-# #=============================================================================================================================
-#     def lfm_integration_window(self):
-#         if self.window_active == False:
-#             self.window_active = True
-#             self.window = Tk()
-#             self.window.iconphoto(False, ImageTk.PhotoImage(image=Image.open(self.get_path("assets/lfm_icon.ico"))))
-#             self.window.title("LFM Integration")
-#             self.window.geometry("260x150")
-#             self.generate_window_elements()
-#             self.window.resizable(width=False,height=False)
-#             self.window_active_widgets = []
-
-#             if int(self.config['USER']['LFMID']) == 0:
-#                 self.window_draw_search()
-#             else:
-#                 self.window_draw_user(version=3)
-            
-#             self.window.mainloop()
-#             self.window.quit()
-#             self.window_active = False
-# #=============================================================================================================================
-#     def lfm_next_race_info(self, series):
-#         latest_races = requests.get(f"{self.config['ENDPOINTS']['RecentRaces']}{series['id']}").json()
-#         next_race_id = int(latest_races['data'][0]['race_id'])+1
-#         next_race_info = requests.get(f"{self.config['ENDPOINTS']['RaceInfo']}{next_race_id}").json()
-
-#         if next_race_info['session_running'] == 1 and next_race_info['splits']['driver_count'] > 0:
-#             for split in next_race_info['splits']['participants']:
-#                 if series['team_series'] == False:
-#                     for driver in split['entries']:
-#                         if int(driver['user_id']) == int(self.config['USER']['LFMID']):
-#                             self.lfm_data['series'] = int(next_race_info['event']['event_name'])
-#                             self.lfm_data['split'] = int(driver['split'])
-#                             if self.lfm_data['split'] == 1:
-#                                 self.lfm_data['sof'] = next_race_info['sof']
-#                             elif self.lfm_data['split'] > 1:
-#                                 self.lfm_data['sof'] = next_race_info[f"split{self.lfm_data['split']}_sof"]
-#                 else:
-#                     for team in split['entries']:
-#                         for driver in team['drivers']:
-#                             if int(driver['user_id']) == int(self.config['USER']['LFMID']):
-#                                 self.lfm_data['series'] = int(next_race_info['event']['event_name'])
-#                                 self.lfm_data['split'] = int(driver['split'])
-#                                 if self.lfm_data['split'] == 1:
-#                                     self.lfm_data['sof'] = next_race_info['sof']
-#                                 elif self.lfm_data['split'] > 1:
-#                                     self.lfm_data['sof'] = next_race_info[f"split{self.lfm_data['split']}_sof"]
-#=============================================================================================================================
     def tray_func(self):
         self.tray_icon = Image.open(get_path("assets/simracing_rp_icon.ico"))
         self.tray_app = pystray.Icon("Simracing Rich Presence", self.tray_icon, menu=pystray.Menu(
             pystray.MenuItem("iRacing Connected", None),
             pystray.MenuItem("ACC Connected", None),
             pystray.MenuItem("Raceroom Connected", None),
-            pystray.MenuItem("Exit", self.close_gui)
+            pystray.MenuItem("Exit", self.close_tray_app)
         ))
         
         self.tray_app.run()
@@ -449,6 +259,6 @@ try:
     acc_class = ACC_API()
     r3e_class = R3E_API()
     discord_class = Discord_API()
-    gui_class = Tkinter_GUI()
+    gui_class = Tkinter_APP()
 except: 
     pass
