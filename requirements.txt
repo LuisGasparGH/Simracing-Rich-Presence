@@ -1,5 +1,4 @@
-Pillow==9.4.0
-Pillow==10.2.0
+Pillow==10.3.0
 pyaccsharedmemory==1.0.0
 pyirsdk==1.2.6
 pypresence==4.2.0
