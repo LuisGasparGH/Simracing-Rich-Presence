@@ -1,7 +1,6 @@
 Pillow==10.4.0
 psutil==6.0.0
 pyaccsharedmemory==1.0.0
-pyirsdk==1.3.3
 pypresence==4.2.0
 pystray==0.19.4
 r3e_api==0.1.2

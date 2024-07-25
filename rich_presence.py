@@ -27,9 +27,10 @@ class SimRacingRichPresence:
                 self.sharedMem.close()
             case "rrre64.exe":
                 self.sharedMem.close()
+        print(f"[DEBUG] {self.runningGame} API closed")
         
     def buildTray(self):
-        self.trayIcon = Image.open(("src/assets/icons/simracing_rp_icon.ico"))
+        self.trayIcon = Image.open(game_funcs.build_path("src/assets/icons/icon.ico"))
         self.trayApp = pystray.Icon("Simracing Rich Presence", self.trayIcon, menu=pystray.Menu(
             pystray.MenuItem("Exit", self.closeTray)
         ))
@@ -43,6 +44,7 @@ class SimRacingRichPresence:
     def createRPC(self):
         self.rpc = Presence(self.discordConfig['APPLICATION'][self.runningGame])
         self.rpc.connect()
+        print(f"[DEBUG] Discord RPC connected")
         self.discordConnected = True
     
     def updateRPC(self):
@@ -57,15 +59,17 @@ class SimRacingRichPresence:
     def closeRPC(self):
         self.rpc.clear()
         self.rpc.close()
+        print(f"[DEBUG] Discord RPC closed")
         self.discordConnected = False
 
     def __init__(self):
         self.exitApp = False
         self.trayIconThread = threading.Thread(target=self.buildTray, args=())
         self.trayIconThread.start()
+        print("[DEBUG] Tray icon launched")
 
         self.discordConfig = ConfigParser()
-        self.discordConfig.read('src/assets/configs/discord_config.ini')
+        self.discordConfig.read(game_funcs.build_path('src/assets/configs/discord_config.ini'))
 
         self.discordRunning = False
         self.discordConnected = False
@@ -75,12 +79,14 @@ class SimRacingRichPresence:
 
         while not self.exitApp:
             self.discordRunning = self.checkProcess("discord.exe")
+            print(f"[DEBUG] Discord running: {self.discordRunning}")
 
             if self.discordRunning:
                 for game in self.discordConfig['APPLICATION']:
                     if self.checkProcess(game):
                         self.runningGame = game
-                        self.gameConfig.read(f'src/assets/configs/{game.lower().replace(".exe", "")}_config.ini')
+                        print(f"[DEBUG] {game} running")
+                        self.gameConfig.read(game_funcs.build_path(f'src/assets/configs/{game.lower().replace(".exe", "")}_config.ini'))
                         match self.runningGame:
                             case "ac2-win64-shipping.exe":
                                 self.sharedMem = accSharedMemory()
@@ -91,6 +97,7 @@ class SimRacingRichPresence:
                             case "rrre64.exe":
                                 self.sharedMem = R3ESharedMemory()
                                 break
+                        print(f"[DEBUG] {self.runningGame} API connected")
                 
                 while self.runningGame != None:
                     if not self.discordConnected:
@@ -104,14 +111,14 @@ class SimRacingRichPresence:
                         case "rrre64.exe":
                             self.latestData = game_funcs.getR3eTelemetry(self.sharedMem, self.gameConfig)
 
-                    print(self.latestData)
+                    print(f"[DEBUG] {self.latestData}")
                     self.updateRPC()
 
                     if self.exitApp:
                         break
 
                     if not self.checkProcess(self.runningGame):
-                        print(f"{self.runningGame} closed")
+                        print(f"[DEBUG] {self.runningGame} closed")
                         self.closeGameAPI()
                         self.runningGame = None
                         self.closeRPC()
@@ -123,6 +130,7 @@ class SimRacingRichPresence:
         print("Exiting Simracing Rich Presence")
         self.closeGameAPI()
         self.closeRPC()
+        print("Quitting application")
         sys.exit()
 
 try:
