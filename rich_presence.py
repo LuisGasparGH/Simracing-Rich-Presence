@@ -133,7 +133,7 @@ class SimRacingRichPresence:
         print("Quitting application")
         sys.exit()
 
-try:
-    simracingRP = SimRacingRichPresence()
-except:
-    pass
+# try:
+simracingRP = SimRacingRichPresence()
+# except:
+#     pass

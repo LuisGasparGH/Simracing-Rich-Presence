@@ -84,36 +84,42 @@ def getLmuTelemetry(sharedMemAPI, config):
             latestData["small_image"] = None
             latestData["small_text"] = None
         else:
-            # TODO - class positioning
-            # for index in range(sharedMemAPI.Rf2Scor.mScoringInfo.mNumVehicles):
-            #     print(f"{sharedMemAPI.Rf2Tele.mVehicles[index].mVehicleName} | P{sharedMemAPI.Rf2Scor.mVehicles[index].mPlace} of {sharedMemAPI.Rf2Scor.mScoringInfo.mNumVehicles}")
-            parsed_car_name = ""
-            while parsed_car_name == "":
-                parsed_car_name = sharedMemAPI.playersVehicleScoring().mVehicleName.decode("utf-8").split((":"))[0].replace("#", "").replace("'", "").replace(" ", "_")
-            car = config['CARS'][parsed_car_name]
+            parsedCar = ""
+            while parsedCar == "":
+                parsedCar = sharedMemAPI.playersVehicleScoring().mVehicleName.decode("utf-8").split((":"))[0].replace("#", "").replace("'", "").replace(" ", "_")
+            car = config['CARS'][parsedCar]
             brand = car.split(" ")[0].lower()
             track = config['TRACKS'][sharedMemAPI.Rf2Scor.mScoringInfo.mTrackName.decode("utf-8").lower().replace(" ", "_")]
             
             latestData["state"] = f"{car} at {track}"
-            personal_best = sharedMemAPI.playersVehicleScoring().mBestLapTime
-            if personal_best < 0:
-                personal_best = None
-            else:
-                pb_split = str(timedelta(seconds=personal_best))[:-3].split(":")
-                personal_best = f"{pb_split[1]}:{pb_split[2]}"
             
-            if sharedMemAPI.Rf2Scor.mScoringInfo.mGameMode > 0:
+            if sharedMemAPI.Rf2Scor.mScoringInfo.mServerPublicIP != 0:
                 onOff = "Online"
             else:
                 onOff = "Offline"
 
-            match sharedMemAPI.Rf2Scor.mScoringInfo.mSession:
-                case 1 | 2 | 3 | 4:
-                    latestData["details"] = f"{onOff} Practice | PB: {personal_best}"
-                case 5 | 6 | 7 | 8:
-                    latestData["details"] = f"{onOff} Qualifying | P{sharedMemAPI.playersVehicleScoring().mPlace} of {sharedMemAPI.Rf2Scor.mScoringInfo.mNumVehicles}"
-                case 9 | 10 | 11 | 12 | 13:
-                    latestData["details"] = f"{onOff} Race | P{sharedMemAPI.playersVehicleScoring().mPlace} of {sharedMemAPI.Rf2Scor.mScoringInfo.mNumVehicles}"
+            if sharedMemAPI.Rf2Scor.mScoringInfo.mSession < 5:
+                personalBest = sharedMemAPI.playersVehicleScoring().mBestLapTime
+                if personalBest < 0:
+                    personalBest = None
+                else:
+                    pbSplit = str(timedelta(seconds=personalBest))[:-3].split(":")
+                    personalBest = f"{pbSplit[1]}:{pbSplit[2]}"
+                latestData["details"] = f"{onOff} Practice | PB: {personalBest}"
+            else:
+                if sharedMemAPI.Rf2Scor.mScoringInfo.mSession < 9:
+                    session = "Qualifying"
+                else:
+                    session = "Race"
+                classPlayer = sharedMemAPI.playersVehicleScoring().mVehicleClass
+                classPos = 1
+                classCars = 0
+                for index in range(sharedMemAPI.Rf2Scor.mScoringInfo.mNumVehicles):
+                    if sharedMemAPI.Rf2Scor.mVehicles[index].mVehicleClass == classPlayer:
+                        classCars += 1
+                        if sharedMemAPI.Rf2Scor.mVehicles[index].mPlace < sharedMemAPI.playersVehicleScoring().mPlace:
+                            classPos += 1
+                latestData["details"] = f"{onOff} {session} | P{classPos} of {classCars}"
 
             # TODO - idenfity all edge case scenarios with the end time always increasing (because it is still loading or paused)
             if sharedMemAPI.Rf2Scor.mScoringInfo.mEndET > 0.0:
