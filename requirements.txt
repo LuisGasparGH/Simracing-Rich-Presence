@@ -4,4 +4,3 @@ pyaccsharedmemory==1.0.0
 pypresence==4.2.0
 pystray==0.19.4
 r3e_api==0.1.2
-setuptools==71.0.0
