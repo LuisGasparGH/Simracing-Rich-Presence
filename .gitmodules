@@ -1,7 +1,3 @@
 [submodule "pyRfactor2SharedMemory"]
 	path = inc/pyRfactor2SharedMemory
 	url = https://github.com/s-victor/pyRfactor2SharedMemory.git
-
-[submodule "inc/pypcars2api"]
-	path = inc/pypcars2api
-	url = https://github.com/marcelomanzo/pypcars2api.git

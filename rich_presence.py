@@ -7,7 +7,7 @@ from tkinter import *
 from PIL import Image
 # Game APIs
 from pyaccsharedmemory import accSharedMemory
-from inc.pypcars2api import pypcars2api
+import pypcars2api
 from inc.pyRfactor2SharedMemory.sharedMemoryAPI import SimInfoAPI
 from r3e_api import R3ESharedMemory
 
@@ -23,8 +23,6 @@ class SimRacingRichPresence:
     def closeGameAPI(self):
         match self.runningGame:
             case "ac2-win64-shipping.exe":
-                self.sharedMem.close()
-            case "ams2.exe":
                 self.sharedMem.close()
             case "lemansultimate.exe":
                 self.sharedMem.close()
@@ -92,7 +90,7 @@ class SimRacingRichPresence:
                             case "ac2-win64-shipping.exe":
                                 self.sharedMem = accSharedMemory()
                                 break
-                            case "ams2.exe":
+                            case "ams2avx.exe":
                                 self.sharedMem = pypcars2api
                                 break
                             case "lemansultimate.exe":
@@ -111,7 +109,7 @@ class SimRacingRichPresence:
                     match self.runningGame:
                         case "ac2-win64-shipping.exe":
                             self.latestData = game_funcs.getAccTelemetry(self.sharedMem, self.gameConfig)
-                        case "ams2.exe":
+                        case "ams2avx.exe":
                             self.latestData = game_funcs.getAms2Telemetry(self.sharedMem, self.gameConfig)
                         case "lemansultimate.exe":
                             self.latestData = game_funcs.getLmuTelemetry(self.sharedMem, self.gameConfig)

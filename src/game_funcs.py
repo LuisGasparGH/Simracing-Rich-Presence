@@ -2,7 +2,7 @@ import sys, os, time, math
 import unicodedata
 from datetime import timedelta
 from pyaccsharedmemory import ACC_SESSION_TYPE, ACC_STATUS
-from inc.pypcars2api.pypcars2api import definitions as AMS2_DEFINITION
+from pypcars2api import definitions as AMS2_DEFINITION
 
 removeChars = ["#", "'", "(", ")"]
 
@@ -93,19 +93,60 @@ def getAms2Telemetry(sharedMemAPI, config):
             latestData["small_image"] = None
             latestData["small_text"] = None
         else:
-            car = telemetry.mCarName
-            brand = car.split(" ")[0].lower()
-            track = telemetry.mTrackLocation
-            layout = telemetry.mTrackVariation
+            car = telemetry.mCarName.decode("utf-8")
+            brand = "Reiza"
+            track = telemetry.mTrackLocation.decode("utf-8")
+            layout = telemetry.mTrackVariation.decode("utf-8")
 
             latestData["state"] = f"{car} at {track} ({layout})"
 
-            match telemetry.mSessionState:
-                case AMS2_DEFINITION.GAME_FRONT_END_REPLAY | AMS2_DEFINITION.GAME_INGAME_REPLAY:
-                    latestData["details"] = f"Watching a {telemetry.mSessionType} replay"
-                    latestData["end"] = None
-            
+            sessionType = telemetry.mSessionState
+            match sessionType:
+                case AMS2_DEFINITION.SESSION_PRACTICE: session = "Practice"
+                case AMS2_DEFINITION.SESSION_QUALIFY: session = "Qualifying"
+                case AMS2_DEFINITION.SESSION_RACE: session = "Race"
+                case AMS2_DEFINITION.SESSION_TIME_ATTACK: session = "Time Trial"
+                case AMS2_DEFINITION.SESSION_TEST: session = "Testing"
 
+            match telemetry.mGameState:
+                case AMS2_DEFINITION.GAME_FRONT_END_REPLAY | AMS2_DEFINITION.GAME_INGAME_REPLAY:
+                    latestData["details"] = f"Watching a {session} replay"
+                    latestData["end"] = None
+                case AMS2_DEFINITION.GAME_INGAME_PLAYING | AMS2_DEFINITION.GAME_INGAME_PAUSED | \
+                AMS2_DEFINITION.GAME_INGAME_INMENU_TIME_TICKING | AMS2_DEFINITION.GAME_INGAME_RESTARTING:
+                    match sessionType:
+                        case AMS2_DEFINITION.SESSION_PRACTICE | AMS2_DEFINITION.SESSION_TEST | \
+                        AMS2_DEFINITION.SESSION_TIME_ATTACK:
+                            if AMS2_DEFINITION.SESSION_TIME_ATTACK:
+                                personalBest = telemetry.mPersonalFastestLapTime
+                            else:
+                                personalBest = telemetry.mBestLapTime
+                            if personalBest < 0:
+                                personalBest = None
+                            else:
+                                pbSplit = str(timedelta(seconds=personalBest))[:-3].split(":")
+                                personalBest = f"{pbSplit[1]}:{pbSplit[2]}"
+                            if AMS2_DEFINITION.SESSION_TIME_ATTACK:
+                                latestData["details"] = f"{session} | All-Time PB: {personalBest}"
+                            else:
+                                latestData["details"] = f"{session} | PB: {personalBest}"
+                        case AMS2_DEFINITION.SESSION_QUALIFY | AMS2_DEFINITION.SESSION_RACE:
+                            # TODO - calculate position
+                            position = None
+                            latestData["details"] = f"{session} | P{position} of {telemetry.mNumParticipants}"
+
+                    if telemetry.mEventTimeRemaining > 0.0 and telemetry.mRaceState == AMS2_DEFINITION.RACESTATE_RACING:
+                        latestData["end"] = math.ceil(time.time() + telemetry.mEventTimeRemaining)
+                    else:
+                        latestData["end"] = None
+                
+            latestData["large_image"] = track.lower()
+            latestData["large_text"] = track
+            latestData["small_image"] = brand.lower()
+            latestData["small_text"] = car
+
+    return latestData
+            
 def getLmuTelemetry(sharedMemAPI, config):
     latestData = {}
     telemetry = sharedMemAPI.isSharedMemoryAvailable()
