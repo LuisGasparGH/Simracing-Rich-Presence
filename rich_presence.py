@@ -88,7 +88,7 @@ class SimRacingRichPresence:
                         self.gameConfig.read(game_funcs.build_path(f'src/assets/configs/{game.lower().replace(".exe", "")}_config.ini'))
                         match self.runningGame:
                             case "ac2-win64-shipping.exe":
-                                self.sharedMem = accSharedMemory()
+                                self.sharedMem = accSharedMemory
                                 break
                             case "ams2avx.exe":
                                 self.sharedMem = pypcars2api
@@ -140,5 +140,6 @@ class SimRacingRichPresence:
 
 # try:
 simracingRP = SimRacingRichPresence()
-# except:
-#     pass
+# except Exception as e:
+#     print(e)
+#     sys.exit()

@@ -3,8 +3,9 @@ import unicodedata
 from datetime import timedelta
 from pyaccsharedmemory import ACC_SESSION_TYPE, ACC_STATUS
 from pypcars2api import definitions as AMS2_DEFINITION
+from inc.pyRfactor2SharedMemory.rF2data import rF2GamePhase
 
-removeChars = ["#", "'", "(", ")"]
+removeChars = ["\x00", "#", "'", "(", ")"]
 
 def build_path(relative):
     try:
@@ -15,20 +16,20 @@ def build_path(relative):
     return os.path.join(base_path, relative)
 
 def textNormalizer(text):
-    normalizedText = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').lower().replace(" ", "_")
+    normalizedText = unicodedata.normalize('NFKD', text).lower().replace(" ", "_")
     
     for char in removeChars:
         normalizedText = normalizedText.replace(char, "")
-    
+
     return normalizedText
-    
 
 def getAccTelemetry(sharedMemAPI, config):
     latestData = {}
-    telemetry = sharedMemAPI.read_shared_memory()
+    telemetry = sharedMemAPI().read_shared_memory()
 
     if telemetry != None:
-        if telemetry.Graphics.status == ACC_STATUS.ACC_OFF:
+        status = telemetry.Graphics.status
+        if status == ACC_STATUS.ACC_OFF:
             latestData["state"] = "In menus"
             latestData["details"] = None
             latestData["end"] = None
@@ -37,16 +38,16 @@ def getAccTelemetry(sharedMemAPI, config):
             latestData["small_image"] = None
             latestData["small_text"] = None
         else:
-            # TODO - swap this to decode
-            car = config['CARS'][telemetry.Static.car_model.replace("\x00", "").lower()]
+            sessionType = telemetry.Graphics.session_type
+            car = config['CARS'][textNormalizer(telemetry.Static.car_model)]
             brand = car.split(" ")[0].lower()
-            track = config['TRACKS'][telemetry.Static.track.replace("\x00", "").lower()]
+            track = config['TRACKS'][textNormalizer(telemetry.Static.track)]
 
             latestData["state"] = f"{car} at {track}"
 
-            match telemetry.Graphics.status:
+            match status:
                 case ACC_STATUS.ACC_REPLAY:      
-                    latestData["details"] = f"Watching a {telemetry.Graphics.session_type} replay"
+                    latestData["details"] = f"Watching a {sessionType} replay"
                     latestData["end"] = None
                 case ACC_STATUS.ACC_LIVE | ACC_STATUS.ACC_PAUSE:
                     if telemetry.Static.is_online:
@@ -54,29 +55,33 @@ def getAccTelemetry(sharedMemAPI, config):
                     else:
                         onOff = "Offline"
                     
-                    match telemetry.Graphics.session_type:
+                    match sessionType:
                         case ACC_SESSION_TYPE.ACC_PRACTICE | ACC_SESSION_TYPE.ACC_HOTLAP | \
                         ACC_SESSION_TYPE.ACC_HOTLAPSUPERPOLE | ACC_SESSION_TYPE.ACC_HOTSTINT:
-                            pbSplit = telemetry.Graphics.best_time_str.replace("\x00", "").split(":")
-                            if pbSplit[0] == "35791":
+                            personalBest = telemetry.Graphics.best_time
+                            if personalBest == 2147483647:
                                 personalBest = None
                             else:
-                                personalBest = f"{pbSplit[0]}:{pbSplit[1]}.{pbSplit[2]}"
-                            latestData["details"] = f"{onOff} {telemetry.Graphics.session_type} | PB: {personalBest}"
+                                pbSplit = str(timedelta(milliseconds=personalBest))[:-3].split(":")
+                                personalBest = f"{pbSplit[1]}:{pbSplit[2]}"
+                            latestData["details"] = f"{onOff} {sessionType} | PB: {personalBest}"
                         case ACC_SESSION_TYPE.ACC_QUALIFY | ACC_SESSION_TYPE.ACC_RACE:
-                            latestData["details"] = f"{onOff} {telemetry.Graphics.session_type} | P{telemetry.Graphics.position} of {telemetry.Static.num_cars}"
+                            # TODO - try to search if there is a way to calculate class position
+                            latestData["details"] = f"{onOff} {sessionType} | P{telemetry.Graphics.position} of {telemetry.Static.num_cars}"
                     
-                    # TODO - idenfity all edge case scenarios with the end time always increasing (because it is still loading or paused)
-                    if telemetry.Graphics.session_time_left > 0.0:
+                    if telemetry.Graphics.session_time_left > 0.0 and (telemetry.Graphics.global_green == True or \
+                        telemetry.Graphics.global_yellow == True or telemetry.Graphics.global_white == True) and \
+                        (onOff == "Offline" and status != ACC_STATUS.ACC_PAUSE):
                         latestData["end"] = math.ceil(time.time() + (telemetry.Graphics.session_time_left/1000))
                     else:
                         latestData["end"] = None
                     
-            latestData["large_image"] = track.lower()
+            latestData["large_image"] = textNormalizer(track)
             latestData["large_text"] = track
             latestData["small_image"] = brand.lower()
             latestData["small_text"] = car
-
+    
+    # sharedMemAPI().close()
     return latestData
 
 def getAms2Telemetry(sharedMemAPI, config):
@@ -151,7 +156,7 @@ def getLmuTelemetry(sharedMemAPI, config):
     latestData = {}
     telemetry = sharedMemAPI.isSharedMemoryAvailable()
     
-    if telemetry != None:
+    if telemetry:
         sessionType = sharedMemAPI.Rf2Scor.mScoringInfo.mSession
         if sessionType == 0 or sharedMemAPI.isTrackLoaded() == 0:
             latestData["state"] = "In menus"
@@ -164,7 +169,7 @@ def getLmuTelemetry(sharedMemAPI, config):
         else:
             parsedCar = ""
             while parsedCar == "":
-                parsedCar = textNormalizer(sharedMemAPI.playersVehicleScoring().mVehicleName.decode("utf-8"))
+                parsedCar = textNormalizer(sharedMemAPI.playersVehicleScoring().mVehicleName.decode("utf-8").split(":")[0])
             car = config['CARS'][parsedCar]
             brand = car.split(" ")[0].lower()
             track = config['TRACKS'][textNormalizer(sharedMemAPI.Rf2Scor.mScoringInfo.mTrackName.decode("utf-8"))]
@@ -200,17 +205,21 @@ def getLmuTelemetry(sharedMemAPI, config):
                                 classPos += 1
                     latestData["details"] = f"{onOff} {session} | P{classPos} of {classCars}"
 
-            # TODO - idenfity all edge case scenarios with the end time always increasing (because it is still loading or paused)
-            if sharedMemAPI.Rf2Scor.mScoringInfo.mEndET > 0.0:
+            # TODO - once they add a pause menu detection variable update this to disable remaining time
+            if sharedMemAPI.Rf2Scor.mScoringInfo.mEndET > 0.0 and \
+                (sharedMemAPI.Rf2Scor.mScoringInfo.mGamePhase == rF2GamePhase.GreenFlag or \
+                 sharedMemAPI.Rf2Scor.mScoringInfo.mGamePhase == rF2GamePhase.FullCourseYellow):
                 remaining_time = sharedMemAPI.Rf2Scor.mScoringInfo.mEndET - sharedMemAPI.Rf2Scor.mScoringInfo.mCurrentET
                 latestData["end"] = math.ceil(time.time() + remaining_time)
             else:
                 latestData["end"] = None
             
-            latestData["large_image"] = track.lower()
+            latestData["large_image"] = textNormalizer(track)
             latestData["large_text"] = track
             latestData["small_image"] = brand.lower()
             latestData["small_text"] = car
+    else:
+        print(f"[DEBUG] Shared Memory not available")
 
     return latestData
 
